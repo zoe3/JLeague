@@ -13,10 +13,53 @@ stadium<-read.csv("../motodata/stadium.csv",
 sample<-read.csv("../motodata/sample_submit.csv",
                  header=FALSE, stringsAsFactors=FALSE, fileEncoding="utf-8")
 
+str(train)
+
+head(train, n=5)
+
+str(test)
+
+str(condition)
+
+head(condition)
+
+str(stadium)
+
+head(stadium, n=5)
+
+str(sample)
+
+anyNA(train)
+
+table(train$stage)
+
+table(train$match)
+
+min(train$id)
+
+max(train$id)
+
+hist(train$y)
+
+table(train$year)
+
 #trainとconditionを対戦カードidを基準に結合
 tmp1<-dplyr::left_join(train, condition, by="id")
 #testとconditionを対戦カードidを基準に結合
 tmp2<-dplyr::left_join(test, condition, by="id")
+
+## 結合したデータをさらにstadiumとスタジアムを基準に結合
+## 基準とする変数のチェック
+length(unique(train$stadium))
+
+length(unique(stadium$name))
+
+tmp <- anti_join(stadium, tmp1, by=c("name"="stadium"))
+
+print(tmp)
+
+train %>%
+    dplyr::filter(grepl("長崎", stadium))
 
 
 #結合(基準とする変数名が違うので注意)
