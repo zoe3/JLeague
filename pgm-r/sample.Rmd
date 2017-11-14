@@ -1,0 +1,24 @@
+# タイトルとか
+
+`r Sys.Date()` @kohske
+
+- レポートの説明とか
+- 概要とか
+- 云々
+
+```{r}
+# ここには解析コード
+foo = rnorm(1000)
+hist(foo)
+```
+
+さらに説明とか
+
+- 今後の目標とか
+- 人生の目標とか
+
+```{r}
+# ここにも解析コード
+df = subset(mtcars, select = mpg:qsec)
+knitr::kable(head(df))
+```

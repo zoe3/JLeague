@@ -2,11 +2,11 @@
 library(dplyr)
 
 ###データ読込(結合したデータ)
-train<-read.csv("C:/JLeague/data/train_new.csv", #読込ファイル
+train<-read.csv("../data/train_new.csv", #読込ファイル
                 header=TRUE, #読込データのヘッダー有無
                 stringsAsFactors=FALSE #文字列の読込時の型指定(character)
 )
-test<-read.csv("C:/JLeague/data/test_new.csv",
+test<-read.csv("../data/test_new.csv",
                header=TRUE,
                stringsAsFactors=FALSE)
 
@@ -31,5 +31,5 @@ pred<-predict(lm, lm_test, type="response")
 submit<-data.frame(test[,"id"], pred)
 
 ###CSV出力(ヘッダーなし)
-write.table(submit, file="C:/JLeague/submit/submit_0628_1_lm.csv",
+write.table(submit, file="../submit/submit_20171110_1_lm.csv",
             quote=FALSE, sep=",", row.names=FALSE, col.names=FALSE)
