@@ -1,0 +1,149 @@
+# 
+
+`r Sys.Date()`
+
+# データの中を調べる。
+
+  データ探索を「Exploratory Data Analysis」と言うらしい。
+
+  対象データは追加データを含めたものとする。順位を算出するには全ての試合情報が必要となる。
+  
+  
+```{r}
+## 使用ライブラリ
+library(tidyverse)
+library(stringi)
+
+## データ読込(結合したデータ)
+train<-read.csv("../data/train_new.csv", #読込ファイル
+                header=TRUE, #読込データのヘッダー有無
+                stringsAsFactors=FALSE #文字列の読込時の型指定(character)
+)
+## test<-read.csv("../data/test_new.csv",
+##                header=TRUE,
+##                stringsAsFactors=FALSE)
+```
+
+今は使わないカラムを減らして、少し見やすくする。後で使うかも。
+	
+```{r}
+train <- train %>%
+    dplyr::select(-(home_team:away_11))
+```
+	
+## データ外観を見る
+
+- 開催節(match)を節(section)と連番(seq)に分ける
+
+```{r}
+## 節を加工
+train <- train %>%
+    dplyr::mutate(match = purrr::map(match, stringi::stri_trans_nfkc)) %>%
+    dplyr::mutate(match = str_replace_all(match, pattern = "[第日]", replacement = "")) %>%
+    tidyr::separate(match, into = c('section','seq'), sep="節") %>%
+    dplyr::mutate(section = as.numeric(section) ,
+                  seq = as.numeric(seq)) 
+```
+
+観客動員数を可視化
+	
+```{r}
+## 節毎のy推移
+ggplot(data = train) +
+    geom_point(aes(x = section, y = y, color=stage)) +
+    facet_grid(year ~ .)
+
+## homeのy推移
+j1_train <- train %>%
+    dplyr::filter(stage=="Ｊ１", year=="2012")
+
+ggplot(data = j1_train, mapping = aes(x = y)) +
+    geom_histogram() +
+    facet_grid(home ~ .)
+```
+
+
+いまいちhistogramでは見づらいので、箱ひげか？(保留)
+
+## 勝点を考える。
+		
+- homeとawayに分けて、勝点を算出する。
+- 順位を算出するには、各Teamの全ての試合情報を並べる必要あり。
+
+```{r}
+## home, awayでレコードを分ける
+train_split <- train %>%
+    tidyr::gather(`home`,`away`, key="type", value="team") %>%
+    dplyr::mutate(my_score = if_else(type=="home", home_score, away_score),
+                  opponent_score = if_else(type=="home", away_score, home_score)) %>%
+    glimpse
+
+## dplyr::select(c(type,home_score,away_score,my_score,opponent_score)) %>% 
+## dplyr::filter(type=="home") %>%
+ 
+## 勝点の算出
+train_split <- train_split %>%
+    dplyr::mutate(victory_point = 0,
+                  victory_point = if_else(my_score > opponent_score, 3, victory_point),
+                  victory_point = if_else(my_score == opponent_score, 1, victory_point)) %>%
+    glimpse
+```
+
+得失点を付与するには、group_byして累積(Cumulative)で演算する。
+
+勝点の累積も合わせて算出する。
+			
+```{r}	
+## 得失点、勝点の累積を算出
+train_point <- train_split %>%
+    dplyr::group_by(year, team) %>%
+    dplyr::arrange(year,section,seq) %>%
+    dplyr::mutate(cum_vp = cumsum(victory_point)) %>%
+    dplyr::mutate(cum_score = cumsum(my_score - opponent_score)) %>%
+    dplyr::ungroup(.) %>%
+    glimpse
+
+## サンプリングで確認
+temp1 <- train_point %>%
+    dplyr::filter(team %in% c("鹿島アントラーズ","サンフレッチェ広島","コンサドーレ札幌")) %>%
+    glimpse
+
+ggplot(data = temp1, mapping=aes(x=section, y=cum_vp)) +
+    geom_line(aes(color=team)) +
+    facet_grid(year ~ stage)
+```
+
+ランキングの付与
+
+- rank : 節単位のランキング
+- desc_rank : 逆順でのランキング(下位が上位)
+- pre_rank : 前節のランキング
+	
+```{r}
+train_rank <- train_point %>%
+    dplyr::group_by(year, section, stage) %>%
+    dplyr::mutate(rank = min_rank(cum_vp)) %>%
+    dplyr::mutate(desc_rank = if_else(stage == "Ｊ１", 34 - rank, 42 - rank)) %>%
+    dplyr::ungroup(.) %>%
+    glimpse
+
+temp <- train_rank %>%
+    dplyr::filter(team %in% c("鹿島アントラーズ","サンフレッチェ広島","コンサドーレ札幌")) 
+
+ggplot(data = temp, mapping = aes(x = section, y = rank)) +
+    geom_line(aes(color = team)) +
+    facet_grid(year ~ stage) +
+    scale_y_reverse()
+
+train_pre_rank <- train_rank %>%
+    dplyr::group_by(year, team) %>%
+    dplyr::mutate(pre_rank = lag(rank)) %>%
+    dplyr::ungroup(.) %>%
+    dplyr::filter(team == "鹿島アントラーズ") %>%
+   glimpse
+ ```	
+	
+(work)チーム名の一覧作成	
+```{r}
+data.frame(dplyr::distinct(temp, team))
+```
