@@ -1,0 +1,268 @@
+# 
+
+`r Sys.Date()`
+
+# Jリーグ観客動員数を予測せよ！【練習問題】
+  
+## 取り組みの方針
+
+   * モデル構築で利用するパラメータ
+     + capa
+     + pre_rank
+
+```{r}
+# 使用ライブラリ
+library(tidyverse)
+
+# データ読込(結合したデータ)
+train<-read.csv("../data/train_new.csv", #読込ファイル
+                header=TRUE, #読込データのヘッダー有無
+                stringsAsFactors=FALSE #文字列の読込時の型指定(character)
+)
+test<-read.csv("../data/test_new.csv",
+               header=TRUE,
+               stringsAsFactors=FALSE)
+```
+
+#### データ加工を全データに実施するため、trainとtestを結合する。
+		
+```{r}
+test$y <- NA
+combi <- rbind(train,test)
+```
+	
+今は使わないカラムを減らして、少し見やすくする。後で使うかも。
+	
+```{r}
+combi <- combi %>%
+    dplyr::select(-(home_01:home_11),-(away_01:away_11))
+```
+
+## データ加工
+
+### 時系列データとして扱い易いように変更する。
+
+1. 開催節(match)を節(section)と連番(seq)に分ける
+
+```{r}
+## 節を加工
+combi <- combi %>%
+    dplyr::mutate(match = purrr::map(match, stringi::stri_trans_nfkc)) %>%
+    dplyr::mutate(match = str_replace_all(match, pattern = "[第日]", replacement = "")) %>%
+    tidyr::separate(match, into = c('section','seq'), sep="節") %>%
+    dplyr::mutate(section = as.numeric(section) ,
+                  seq = as.numeric(seq)) 
+```
+
+### 勝点とランキングを考える。
+		
+#### 勝点を算出する。
+  * 勝点は各節でTeam単位に出力されるため、home, awayの両方を計算する必要がある。
+  * 自分と相手のscoreを比較して、勝点(3,1,0)を算出する。
+
+  
+```{r}
+## home, awayでレコードを分ける
+combi_split <- combi %>%
+    tidyr::gather(`home`,`away`, key="type", value="team") %>%
+    dplyr::mutate(my_score = if_else(type=="home", home_score, away_score),
+                  opponent_score = if_else(type=="home", away_score, home_score))
+ 
+## 勝点の算出
+combi_split <- combi_split %>%
+    dplyr::mutate(victory_point = 0,
+                  victory_point = if_else(my_score > opponent_score, 3, victory_point),
+                  victory_point = if_else(my_score == opponent_score, 1, victory_point))
+```
+
+#### 得失点を算出する。
+   * チームごと(group_by)に、自分と相手のscoreを減算して、その結果を累積(Cumulative)する。
+   * 勝点の累積を算出する。
+
+```{r}
+## 得失点、勝点の累積を算出
+combi_point <- combi_split %>%
+    dplyr::group_by(year, team) %>%
+    dplyr::arrange(year,section,seq) %>%
+    dplyr::mutate(cum_vp = cumsum(victory_point)) %>%
+    dplyr::mutate(cum_score = cumsum(my_score - opponent_score)) %>%
+    dplyr::ungroup(.)
+```	
+
+#### 順位を算出する。
+  * 節で切りTeamの全ての勝点と得失点でrankingを取る。
+    * rank : 節単位のランキング
+    * desc_rank : 逆順でのランキング(下位が上位)
+    * pre_rank : 前節のランキング
+	
+```{r}
+combi_rank <- combi_point %>%
+    dplyr::group_by(year, section, stage) %>%
+    dplyr::mutate(rank = min_rank(cum_vp)) %>%
+    dplyr::mutate(desc_rank = if_else(stage == "Ｊ１", 34 - rank, 42 - rank)) %>%
+    dplyr::ungroup(.) 
+
+combi_pre_rank <- combi_rank %>%
+    dplyr::group_by(year, team) %>%
+    dplyr::mutate(pre_rank = lag(rank)) %>%
+    dplyr::ungroup(.) %>%
+    dplyr::mutate(pre_rank = ifelse(is.na(pre_rank),0, pre_rank))
+
+## pre_rankにNAが含まれている。 
+## 後述する分析結果より、pre_rankがyに対して負の相関あり？と考えて、0を投入する。
+
+combi_pre_rank %>%
+    dplyr::filter(team == "鹿島アントラーズ") %>%
+    glimpse
+```
+
+
+#### テレビ局の数の導出
+相関がある様には見えない..
+```{r}
+combi_mod <- combi_pre_rank %>%
+    dplyr::mutate(media = str_count(tv,"／") + 1)
+
+combi_mod %>%
+    ggplot(mapping = aes(x = media, y = y)) + geom_jitter()
+```
+
+#### 開始時間 todo
+     
+#### 天候 todo
+
+## trainとtestに分割する
+   
+```{r}
+train <- combi_mod %>%
+    dplyr::filter(!is.na(y))
+test <- combi_mod %>%
+    dplyr::filter(is.na(y))
+```   	
+
+---	
+			
+## Hold Outで検証
+
+精度を見たいのでホールドアウト法により構築データと検証データに分ける  
+2012-2013年を構築データとし、2014年の前半を検証データとする。
+
+* モデル作成用のカラム
+    + capa
+    + pre_rank
+
+temparatureは相関がなさそうなので使わない。(2017.11.22講義資料より)
+    
+```{r}
+train_train <- train %>%
+    dplyr::filter(year < 2014) 
+train_test <- train %>%
+    dplyr::filter(year == 2014) %>%
+    dplyr::filter(home_team != "カマタマーレ讃岐")
+## カマタマーレ讃岐は2014からのチームなので、train_testから除外
+
+param <- c("capa", "pre_rank", "media", "stage", "home_team", "section", "away_team")
+
+###使用変数の作成
+#変数選択(目的変数, 収容人数, 前節ランキング)
+lm_train<-dplyr::select(train_train, y, param)
+lm_test<-dplyr::select(train_test, param)
+
+###重回帰分析
+#family:目的変数の確率分布とリンク関数の設定(今回は正規分布と恒等写像)
+lm<-glm(y ~ ., data=lm_train, family=gaussian(link="identity"))
+
+### testに当てはめ
+## type="response"でリンク関数を当てはめる前の値が返ってくる
+pred<-predict(lm, lm_test, type="response")
+
+## typeが無指定だとリンク関数を当てはめた値が返ってくる
+## link="log"であれば, exp(pred)で予測値を返すことができる
+
+## 結果出す前に、home,away分割を戻す
+train_test$pred <- pred
+
+result <- train_test %>%
+    dplyr::group_by(id) %>%
+    dplyr::summarise(
+               y = mean(y),
+               pred = mean(pred)
+           )
+## RMSEの計算
+sqrt(mean((result$y - result$pred)^2))
+```
+
+### 投稿データ作成
+
+```{r}    
+###使用変数の作成
+#変数選択(目的変数, 収容人数, 前節ランキング)
+lm_train<-dplyr::select(train, y, capa, pre_rank)
+lm_test<-dplyr::select(test, capa, pre_rank)
+
+
+###重回帰分析
+#family:目的変数の確率分布とリンク関数の設定(今回は正規分布と恒等写像)
+lm<-glm(y ~ ., data=lm_train, family=gaussian(link="identity"))
+
+print(lm)
+
+###testに当てはめ
+#type="response"でリンク関数を当てはめる前の値が返ってくる
+pred<-predict(lm, lm_test, type="response")
+
+#typeが無指定だとリンク関数を当てはめた値が返ってくる
+#link="log"であれば, exp(pred)で予測値を返すことができる
+
+## testデータにAddしたレコードを除去する。
+
+sample <- read_csv("../motodata/sample_submit.csv", col_names=c("id","pred"))
+nrow(sample)
+
+test$pred <- pred
+
+###submit形式に整える
+submit <- sample %>%
+    dplyr::select(id) %>%
+    dplyr::left_join(test, by="id") %>%
+    dplyr::group_by(id) %>%
+    dplyr::summarise(pred = mean(pred)) %>%
+    dplyr::ungroup(.)
+
+
+###CSV出力(ヘッダーなし)
+write.table(submit, file="../submit/submit_20171120_1_lm_pre_rank.csv",
+            quote=FALSE, sep=",", row.names=FALSE, col.names=FALSE)
+```
+結果(6,071 -> 6,048)
+---
+### データの考察
+
+#### 前節ランキング(pre_rank)は観客動員数(y)と相関があるのか？
+ランクが引くい方が動員数が多い様だ。
+
+```{r}
+train %>%
+    dplyr::group_by(stage, pre_rank) %>%
+    dplyr::summarise(y_mean = mean(y)) %>%
+    dplyr::ungroup(.) %>%
+    ggplot(., mapping=aes(x = pre_rank, y = y_mean)) + geom_line(mapping = aes(colour = stage))
+```
+
+#### 対戦するチームの組合せによって集客が変わるのか？
+年で若干異なる。傾向の有無までは判断できず。
+   
+```{r, fig.width=15}
+train %>%
+    dplyr::filter(stage == "Ｊ１") %>%
+    dplyr::mutate(team1 = if_else(home_team < away_team, home_team, away_team),
+                  team2 = if_else(home_team > away_team, home_team, away_team)) %>%
+    dplyr::group_by(year, team1, team2) %>%
+    dplyr::summarise(y_mean = mean(y)) %>%
+    dplyr::ungroup(.) %>%
+    dplyr::filter(y_mean > 20000) %>%
+    ggplot(mapping=aes(x = team1, y = team2)) +
+    geom_tile(mapping = aes(fill=y_mean)) +
+    facet_grid(. ~ year) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
