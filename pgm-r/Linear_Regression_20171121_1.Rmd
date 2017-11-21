@@ -1,20 +1,34 @@
-# 
+---
+title : データサイエンティスト養成講座  Jリーグ観客動員数を予測せよ！【練習問題】
+author : Shnji KAWASOE
+output :
+  html_document:
+    number_sections: true
+    toc: true
+    fig_width: 7
+    fig_height: 4.5
+    theme: readable
+---
+Data : `r Sys.Date()`
 
-`r Sys.Date()`
+# 取り組みの方針
 
-# Jリーグ観客動員数を予測せよ！【練習問題】
-  
-## 取り組みの方針
+モデル作成用のカラム
+```{r}
+param <- c("capa", "pre_rank", "media", "stage", "section", "home_team", "away_team","hour","week","rain")
+explain <- c("スタジアムの収容人数", "前節のランキング", "tv局数", "開催大会", "節", "ホームチーム", "アウェイチーム", "開始時刻", "1(土日祝)、0(平日)", "1(雨)、0(雨以外)")
+cols <- data.frame(Parameter=param, Explain=explain)
+   
+kable(cols)
+```
 
-   * モデル構築で利用するパラメータ
-     + capa
-     + pre_rank
+# データ加工	
 
 ```{r}
-# 使用ライブラリ
+## 使用ライブラリ
 library(tidyverse)
 
-# データ読込(結合したデータ)
+## データ読込(結合したデータ)
 train<-read.csv("../data/train_new.csv", #読込ファイル
                 header=TRUE, #読込データのヘッダー有無
                 stringsAsFactors=FALSE #文字列の読込時の型指定(character)
@@ -23,26 +37,18 @@ test<-read.csv("../data/test_new.csv",
                header=TRUE,
                stringsAsFactors=FALSE)
 ```
-
-#### データ加工を全データに実施するため、trainとtestを結合する。
-		
-```{r}
+## データ加工を全データに実施するため、trainとtestを結合する。
+```{r}	
 test$y <- NA
 combi <- rbind(train,test)
-```
-	
-今は使わないカラムを減らして、少し見やすくする。後で使うかも。
-	
-```{r}
+
+## 今は使わないカラムを減らして、少し見やすくする。後で使うかも。
 combi <- combi %>%
     dplyr::select(-(home_01:home_11),-(away_01:away_11))
 ```
-
-## データ加工
-
-### 時系列データとして扱い易いように変更する。
-
-1. 開催節(match)を節(section)と連番(seq)に分ける
+## 開催節を分割する。
+時系列データとして扱い易いように変更する。  
+開催節(match)を節(section)と連番(seq)に分ける。
 
 ```{r}
 ## 節を加工
@@ -54,12 +60,11 @@ combi <- combi %>%
                   seq = as.numeric(seq)) 
 ```
 
-### 勝点とランキングを考える。
+## 勝点とランキングを考える。
 		
-#### 勝点を算出する。
+### 勝点を算出する。
   * 勝点は各節でTeam単位に出力されるため、home, awayの両方を計算する必要がある。
   * 自分と相手のscoreを比較して、勝点(3,1,0)を算出する。
-
   
 ```{r}
 ## home, awayでレコードを分ける
@@ -74,8 +79,7 @@ combi_split <- combi_split %>%
                   victory_point = if_else(my_score > opponent_score, 3, victory_point),
                   victory_point = if_else(my_score == opponent_score, 1, victory_point))
 ```
-
-#### 得失点を算出する。
+### 得失点を算出する。
    * チームごと(group_by)に、自分と相手のscoreを減算して、その結果を累積(Cumulative)する。
    * 勝点の累積を算出する。
 
@@ -89,7 +93,7 @@ combi_point <- combi_split %>%
     dplyr::ungroup(.)
 ```	
 
-#### 順位を算出する。
+### 順位を算出する。
   * 節で切りTeamの全ての勝点と得失点でrankingを取る。
     * rank : 節単位のランキング
     * desc_rank : 逆順でのランキング(下位が上位)
@@ -115,21 +119,41 @@ combi_pre_rank %>%
     dplyr::filter(team == "鹿島アントラーズ") %>%
     glimpse
 ```
-
-
-#### テレビ局の数の導出
+## その他の加工
+### テレビ局の数の導出
 相関がある様には見えない..
 ```{r}
-combi_mod <- combi_pre_rank %>%
+combi_tv <- combi_pre_rank %>%
     dplyr::mutate(media = str_count(tv,"／") + 1)
 
-combi_mod %>%
-    ggplot(mapping = aes(x = media, y = y)) + geom_jitter()
+combi_tv %>%
+    ggplot(mapping = aes(x = media, y = y)) + geom_jitter(mapping = aes(colour = stage))
 ```
 
-#### 開始時間 todo
-     
-#### 天候 todo
+### 開始時間 
+評価方法が不明瞭。
+```{r}
+combi_time <- combi_tv %>%
+    dplyr::mutate(hour = str_sub(time, 1,2)) %>%
+    dplyr::mutate(week = ifelse(str_detect(gameday,"[土日祝]"), 1, 0))
+
+combi_time %>%
+    ggplot(mapping = aes(x = hour, y = y)) +  geom_jitter() + facet_grid(stage ~ week)
+```
+
+### 天候
+評価方法が不明瞭。
+```{r}
+combi_weather <- combi_time %>%
+    dplyr::mutate(rain = as.factor(ifelse(str_detect(weather,"雨"), 1, 0)))
+
+combi_weather %>%
+    ggplot(mapping = aes(x = rain, y = y)) +  geom_jitter(mapping = aes(colour = stage))
+```
+
+```{r}
+combi_mod <- combi_weather
+```
 
 ## trainとtestに分割する
    
@@ -142,14 +166,10 @@ test <- combi_mod %>%
 
 ---	
 			
-## Hold Outで検証
+# Hold Outで検証
 
 精度を見たいのでホールドアウト法により構築データと検証データに分ける  
 2012-2013年を構築データとし、2014年の前半を検証データとする。
-
-* モデル作成用のカラム
-    + capa
-    + pre_rank
 
 temparatureは相関がなさそうなので使わない。(2017.11.22講義資料より)
     
@@ -158,10 +178,9 @@ train_train <- train %>%
     dplyr::filter(year < 2014) 
 train_test <- train %>%
     dplyr::filter(year == 2014) %>%
-    dplyr::filter(home_team != "カマタマーレ讃岐")
+    dplyr::filter(home_team != "カマタマーレ讃岐") %>%
+    dplyr::filter(away_team != "カマタマーレ讃岐")
 ## カマタマーレ讃岐は2014からのチームなので、train_testから除外
-
-param <- c("capa", "pre_rank", "media", "stage", "home_team", "section", "away_team")
 
 ###使用変数の作成
 #変数選択(目的変数, 収容人数, 前節ランキング)
@@ -192,20 +211,20 @@ result <- train_test %>%
 sqrt(mean((result$y - result$pred)^2))
 ```
 
-### 投稿データ作成
+---
+
+# OPT投稿データ作成
+テストデータに追加ファイルを使用しているので、投稿対象の試合に絞る。
 
 ```{r}    
 ###使用変数の作成
 #変数選択(目的変数, 収容人数, 前節ランキング)
-lm_train<-dplyr::select(train, y, capa, pre_rank)
-lm_test<-dplyr::select(test, capa, pre_rank)
-
+lm_train<-dplyr::select(train, y, param)
+lm_test<-dplyr::select(test, param)
 
 ###重回帰分析
 #family:目的変数の確率分布とリンク関数の設定(今回は正規分布と恒等写像)
 lm<-glm(y ~ ., data=lm_train, family=gaussian(link="identity"))
-
-print(lm)
 
 ###testに当てはめ
 #type="response"でリンク関数を当てはめる前の値が返ってくる
@@ -231,14 +250,16 @@ submit <- sample %>%
 
 
 ###CSV出力(ヘッダーなし)
-write.table(submit, file="../submit/submit_20171120_1_lm_pre_rank.csv",
+write.table(submit, file="../submit/submit_20171121_1_lm.csv",
             quote=FALSE, sep=",", row.names=FALSE, col.names=FALSE)
 ```
-結果(6,071 -> 6,048)
----
-### データの考察
 
-#### 前節ランキング(pre_rank)は観客動員数(y)と相関があるのか？
+結果(6,071 -> 6,048 -> 3,582)
+
+---
+# データの考察
+
+## 前節ランキング(pre_rank)は観客動員数(y)と相関があるのか？
 ランクが引くい方が動員数が多い様だ。
 
 ```{r}
@@ -249,7 +270,7 @@ train %>%
     ggplot(., mapping=aes(x = pre_rank, y = y_mean)) + geom_line(mapping = aes(colour = stage))
 ```
 
-#### 対戦するチームの組合せによって集客が変わるのか？
+## 対戦するチームの組合せによって集客が変わるのか？
 年で若干異なる。傾向の有無までは判断できず。
    
 ```{r, fig.width=15}
@@ -266,3 +287,5 @@ train %>%
     facet_grid(. ~ year) +
     theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
+
+	
