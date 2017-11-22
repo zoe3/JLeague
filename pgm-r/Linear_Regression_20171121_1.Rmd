@@ -1,6 +1,6 @@
 ---
-title : データサイエンティスト養成講座  Jリーグ観客動員数を予測せよ！【練習問題】
-author : Shnji KAWASOE
+title : DS養成講座  Jリーグ観客動員数を予測せよ！
+author : Shinji KAWASOE
 output :
   html_document:
     number_sections: true
@@ -11,10 +11,20 @@ output :
 ---
 Data : `r Sys.Date()`
 
+# 概要
+
+コンペの内容  
+https://deepanalytics.jp/compe/27
+
+本コンテストでは、2012年～2014年シーズン前半までのデータを使って、  
+「2014年後半戦J1,J2全試合の観客動員数を予測するモデル」  
+を作成していただきます。
+
 # 取り組みの方針
 
 モデル作成用のカラム
 ```{r}
+library(knitr)
 param <- c("capa", "pre_rank", "media", "stage", "section", "home_team", "away_team","hour","week","rain")
 explain <- c("スタジアムの収容人数", "前節のランキング", "tv局数", "開催大会", "節", "ホームチーム", "アウェイチーム", "開始時刻", "1(土日祝)、0(平日)", "1(雨)、0(雨以外)")
 cols <- data.frame(Parameter=param, Explain=explain)
