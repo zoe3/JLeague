@@ -1,0 +1,168 @@
+# Data Import
+
+## 取り組み
+2017.11.24
+
+* スタジアム別名の統合
+   * 長崎県立総合運動公園陸上競技場 -> 長崎市総合運動公園かきどまり陸上競技場
+* チーム名改名を統合
+   * ザスパクサツ群馬 -> ザスパ草津
+
+2017.11.15
+
+* 欠損データの追加
+
+#データ読込
+
+```{r}
+## 使用ライブラリ
+library(dplyr)
+
+train <- read.csv("../motodata/train.csv",
+                  header=TRUE, stringsAsFactors=FALSE, fileEncoding="utf-8")
+train_add <- read.csv("../motodata/train_add.csv",
+                      header=TRUE, stringsAsFactors=FALSE, fileEncoding="utf-8")
+train <- rbind(train, train_add)
+
+test <- read.csv("../motodata/test.csv",
+                 header=TRUE, stringsAsFactors=FALSE, fileEncoding="utf-8")
+test_add <- read.csv("../motodata/2014_add.csv",
+                 header=TRUE, stringsAsFactors=FALSE, fileEncoding="utf-8")
+test <- rbind(test,test_add)
+
+condition <- read.csv("../motodata/condition.csv",
+                      header=TRUE, stringsAsFactors=FALSE, fileEncoding="utf-8")
+condition_add <- read.csv("../motodata/condition_add.csv",
+                      header=TRUE, stringsAsFactors=FALSE, fileEncoding="utf-8")
+condition <- rbind(condition, condition_add)
+
+stadium<-read.csv("../motodata/stadium.csv",
+                  header=TRUE, stringsAsFactors=FALSE, fileEncoding="utf-8")
+sample<-read.csv("../motodata/sample_submit.csv",
+                 header=FALSE, stringsAsFactors=FALSE, fileEncoding="utf-8")
+```
+# 確認
+定義を確認する。
+```{r}
+str(sample)
+
+str(test)
+
+str(train)
+
+str(condition)
+
+str(stadium)
+```
+欠損の確認
+```{r}
+anyNA(train)
+
+table(train$stage)
+
+table(train$match)
+
+hist(train$y)
+
+table(train$year)
+```
+# 結合
+## 対戦データへ試合詳細データを付与
+
+```{r}
+## 結合したデータをさらにstadiumとスタジアムを基準に結合
+## 基準とする変数のチェック
+length(unique(train$stadium))
+
+length(unique(stadium$name))
+
+tmp <- anti_join(stadium, tmp1, by=c("name"="stadium"))
+
+print(tmp)
+```
+長崎のスタジアムは別名が存在する。
+```{r}
+nrow(train)
+nrow(test)
+
+## train, testを同時に処理する。
+test$y <- NA
+combi <- rbind(train,test)
+
+combi %>%
+    dplyr::filter(grepl("長崎", stadium)) %>%
+    dplyr::select(stadium) %>%
+    dplyr::distinct(stadium)
+
+stadium %>%
+    dplyr::filter(grepl("長崎", name))
+
+## 長崎市総合運動公園かきどまり陸上競技場に寄せる。
+combi_mod <- combi %>%
+    dplyr::mutate(stadium = ifelse(grepl("長崎", stadium),
+                                   "長崎市総合運動公園かきどまり陸上競技場",
+                                   stadium))
+
+combi_mod %>%
+    dplyr::filter(grepl("長崎", stadium)) %>%
+    dplyr::select(stadium) %>%
+    dplyr::distinct(stadium)
+```
+チーム名を統合
+
+```{r}
+combi_mod %>%
+    dplyr::filter(grepl("ザスパ", home)) %>%
+    dplyr::select(home) %>%
+    dplyr::distinct(home)
+
+combi_mod2 <- combi_mod %>%
+    dplyr::mutate(home = ifelse(grepl("ザスパ",home), "ザスパ草津",home),
+                  away = ifelse(grepl("ザスパ",away), "ザスパ草津",away))
+
+combi_mod2 %>%
+    dplyr::filter(grepl("ザスパ", home)) %>%
+    dplyr::select(home) %>%
+    dplyr::distinct(home)
+
+combi_mod2 %>%
+    dplyr::filter(grepl("ザスパ", away)) %>%
+    dplyr::select(away) %>%
+    dplyr::distinct(away)
+
+condition <- condition %>%
+    dplyr::mutate(home_team= ifelse(grepl("ザスパ",home_team), "ザスパ草津",home_team),
+                  away_team = ifelse(grepl("ザスパ",away_team), "ザスパ草津",away_team))
+```
+
+
+```{r}
+train <- combi_mod2 %>%
+    dplyr::filter(!is.na(y))
+
+test <- combi_mod2 %>%
+    dplyr::filter(is.na(y))
+
+nrow(train)
+nrow(test)
+
+
+#trainとconditionを対戦カードidを基準に結合
+tmp1<-dplyr::left_join(train, condition, by="id")
+#testとconditionを対戦カードidを基準に結合
+tmp2<-dplyr::left_join(test, condition, by="id")
+
+```
+```{r}
+#結合(基準とする変数名が違うので注意)
+train_new<-dplyr::left_join(tmp1, stadium, by=c("stadium" = "name"))
+test_new<-dplyr::left_join(tmp2, stadium, by=c("stadium" = "name"))
+```
+# 出力
+分析用に出力する。
+```{r}
+write.table(train_new, file="../data/train_new.csv",
+            quote=FALSE, sep=",", row.names=FALSE, col.names=TRUE)
+write.table(test_new, file="../data/test_new.csv",
+            quote=FALSE, sep=",", row.names=FALSE, col.names=TRUE)
+```
