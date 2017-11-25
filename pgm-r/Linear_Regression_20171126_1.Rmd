@@ -37,6 +37,10 @@ kable(cols)
 
 ## ポイントとその履歴
 
+2017.11.25
+
+* 点数が近いチームは盛り上がる？near変数の作成
+
 2017.11.24 r2
 
 結果 3,541.17803
@@ -166,7 +170,8 @@ combi_pre_rank <- combi_rank %>%
     dplyr::group_by(year, team) %>%
     dplyr::mutate(pre_rank = lag(rank)) %>%
     dplyr::ungroup(.) %>%
-    dplyr::mutate(pre_rank = ifelse(is.na(pre_rank),0, pre_rank))
+    dplyr::mutate(pre_rank = ifelse(is.na(pre_rank),0, pre_rank)) %>%
+    dplyr::mutate(pre_desc_rank = if_else(stage == "Ｊ１", 34 - pre_rank, 42 - pre_rank))
 
 ## pre_rankにNAが含まれている。 
 ## 後述する分析結果より、pre_rankがyに対して負の相関あり？と考えて、0を投入する。
@@ -178,11 +183,11 @@ combi_pre_rank %>%
 ## 試合単位にマージ
 home_combi <- combi_pre_rank %>%
     dplyr::filter(type == "home") %>%
-    dplyr::select(c(id, victory_point, cum_vp, cum_score, rank, desc_rank, pre_rank))
+    dplyr::select(c(id, victory_point, cum_vp, cum_score, rank, desc_rank, pre_rank, pre_desc_rank))
 
 away_combi <- combi_pre_rank %>%
     dplyr::filter(type == "away") %>%
-    dplyr::select(c(id, victory_point, cum_vp, cum_score, rank, desc_rank, pre_rank))
+    dplyr::select(c(id, victory_point, cum_vp, cum_score, rank, desc_rank, pre_rank, pre_desc_rank))
 
 combi_ranking <- combi %>%
     dplyr::left_join(home_combi, by="id") %>%
@@ -191,14 +196,16 @@ combi_ranking <- combi %>%
                   cum_score.home =cum_score,
                   rank.home = rank,
                   desc_rank.home = desc_rank,
-                  pre_rank.home = pre_rank) %>%
+                  pre_rank.home = pre_rank,
+                  pre_desc_rank.home = pre_desc_rank) %>%
     dplyr::left_join(away_combi, by="id") %>%
     dplyr::rename(victory_point.away = victory_point,
                   cum_vp.away = cum_vp,
                   cum_score.away =cum_score,
                   rank.away = rank,
                   desc_rank.away = desc_rank,
-                  pre_rank.away = pre_rank)
+                  pre_rank.away = pre_rank,
+                  pre_desc_rank.away = pre_desc_rank)
 ```
 ## その他の加工
 ### テレビ局の数の導出
@@ -248,6 +255,23 @@ combi_weather %>%
 ```{r}
 combi_y_0 <- combi_weather %>%
     dplyr::filter(is.na(y) | y != 0)
+```
+
+### 点数の近いチームの変数
+点数の近いチーム(near)はyの説明変数とはならない。
+```{r}
+comb_near <- combi_y_0 %>%
+    dplyr::mutate(near = log(1/(abs(rank.home - rank.away) + 1)))
+
+ggplot(data = comb_near, mapping = aes(x = near, y = y)) + geom_smooth() + geom_point() + facet_grid(. ~ stage)
+```	
+
+### 節終盤で下位は盛り上るか？
+```{r}
+combi_heat <- combi_y_0 %>%
+    dplyr::mutate(heat = section/(pre_desc_rank.home + pre_desc_rank.away + 1))
+
+ggplot(data = comb_heat, mapping = aes(x = heat, y = y)) + geom_point() + facet_grid(. ~ stage)
 ```
 
 ```{r}
