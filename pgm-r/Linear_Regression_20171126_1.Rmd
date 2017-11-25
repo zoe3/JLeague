@@ -28,8 +28,8 @@ https://deepanalytics.jp/compe/27
 library(tidyverse)
 library(knitr)
 
-param <- c("capa", "pre_rank.home", "pre_rank.away", "media", "section", "home_team", "away_team","hour","week","rain")
-explain <- c("スタジアムの収容人数", "前節のランキング(home)","前節のランキング(away)", "tv局数", "節", "ホームチーム", "アウェイチーム", "開始時刻", "1(土日祝)、0(平日)", "1(雨)、0(雨以外)")
+param <- c("capa", "pre_rank.home", "pre_rank.away", "media", "section", "home_team", "away_team","hour","week","rain","near","heat")
+explain <- c("スタジアムの収容人数", "前節のランキング(home)","前節のランキング(away)", "tv局数", "節", "ホームチーム", "アウェイチーム", "開始時刻", "1(土日祝)、0(平日)", "1(雨)、0(雨以外)","ランキングの近さ","後半の下位争い")
 cols <- data.frame(Parameter=param, Explain=explain)
    
 kable(cols)
@@ -37,9 +37,12 @@ kable(cols)
 
 ## ポイントとその履歴
 
-2017.11.25
+2017.11.26
+
+結果 3,581.42363
 
 * 点数が近いチームは盛り上がる？near変数の作成
+* 後半の下位争いは盛り上がる？heat変数の作成
 
 2017.11.24 r2
 
@@ -260,22 +263,24 @@ combi_y_0 <- combi_weather %>%
 ### 点数の近いチームの変数
 点数の近いチーム(near)はyの説明変数とはならない。
 ```{r}
-comb_near <- combi_y_0 %>%
+combi_near <- combi_y_0 %>%
     dplyr::mutate(near = log(1/(abs(rank.home - rank.away) + 1)))
 
-ggplot(data = comb_near, mapping = aes(x = near, y = y)) + geom_smooth() + geom_point() + facet_grid(. ~ stage)
+ggplot(data = combi_near, mapping = aes(x = near, y = y)) + geom_smooth() + geom_point() + facet_grid(. ~ stage)
 ```	
 
 ### 節終盤で下位は盛り上るか？
+傾向は見えない。現状、見方が悪いと思う。別の説明変数がよりyと相関する場合は、そちらに引きづられて、この変数の効果を確認できないのでは？
+
 ```{r}
-combi_heat <- combi_y_0 %>%
+combi_heat <- combi_near %>%
     dplyr::mutate(heat = section/(pre_desc_rank.home + pre_desc_rank.away + 1))
 
-ggplot(data = comb_heat, mapping = aes(x = heat, y = y)) + geom_point() + facet_grid(. ~ stage)
+ggplot(data = combi_heat, mapping = aes(x = heat, y = y)) + geom_point() + facet_grid(. ~ stage)
 ```
 
 ```{r}
-combi_mod <- combi_y_0
+combi_mod <- combi_heat
 ```
 
 ### Spreadingで試合id毎のレコードにする(todo)
@@ -401,7 +406,7 @@ kable(head(zan %>% dplyr::filter(diff<=0), n=25))
 
 
 ###CSV出力(ヘッダーなし)
-write.table(submit, file="../submit/submit_20171124_2_lm.csv",
+write.table(submit, file="../submit/submit_20171126_1_lm.csv",
             quote=FALSE, sep=",", row.names=FALSE, col.names=FALSE)
 ```
 
