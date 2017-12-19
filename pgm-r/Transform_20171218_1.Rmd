@@ -1,0 +1,265 @@
+---
+title : DS養成講座  Jリーグ観客動員数を予測せよ！(Transform)
+author : Shinji KAWASOE
+output :
+  html_document:
+    number_sections: true
+    toc: true
+    fig_width: 8
+    fig_height: 4.5
+    theme: readable
+---
+Data : `r Sys.Date()`
+
+# データ加工
+
+```{r setup}
+## 使用ライブラリ
+library(tidyverse)
+library(modelr)
+library(knitr)
+```
+
+```{r read.csv}
+
+## データ読込(結合したデータ)
+train<-read.csv("../data/train_new.csv", #読込ファイル
+                header=TRUE, #読込データのヘッダー有無
+                stringsAsFactors=FALSE #文字列の読込時の型指定(character)
+)
+test<-read.csv("../data/test_new.csv",
+               header=TRUE,
+               stringsAsFactors=FALSE)
+```
+
+## データ加工を全データに実施するため、trainとtestを結合する。
+```{r make combi}	
+test$y <- NA
+combi <- rbind(train,test)
+
+## 今は使わないカラムを減らして、少し見やすくする。後で使うかも。
+combi <- combi %>%
+    dplyr::select(-(home_01:home_11),-(away_01:away_11))
+```
+## 開催節を分割する。
+時系列データとして扱い易いように変更する。  
+開催節(match)を節(section)と連番(seq)に分ける。
+
+```{r section}
+## 節を加工
+combi <- combi %>%
+    dplyr::mutate(match = purrr::map(match, stringi::stri_trans_nfkc)) %>%
+    dplyr::mutate(match = str_replace_all(match, pattern = "[第日]", replacement = "")) %>%
+    tidyr::separate(match, into = c('section','seq'), sep="節") %>%
+    dplyr::mutate(section = as.numeric(section) ,
+                  seq = as.numeric(seq)) 
+```
+
+## 勝点とランキングを考える。
+		
+### 勝点を算出する。
+* 勝点は各節でTeam単位に出力されるため、home, awayの両方を計算する必要がある。
+* 自分と相手のscoreを比較して、勝点(3,1,0)を算出する。
+  
+```{r home and away}
+## home, awayでレコードを分ける
+combi_split <- combi %>%
+    tidyr::gather(`home`,`away`, key="type", value="team") %>%
+    dplyr::mutate(my_score = if_else(type=="home", home_score, away_score),
+                  opponent_score = if_else(type=="home", away_score, home_score))
+ 
+## 勝点の算出
+combi_split <- combi_split %>%
+    dplyr::mutate(victory_point = 0,
+                  victory_point = if_else(my_score > opponent_score, 3, victory_point),
+                  victory_point = if_else(my_score == opponent_score, 1, victory_point))
+```
+### 得失点を算出する。
+* チームごと(group_by)に、自分と相手のscoreを減算して、その結果を累積(Cumulative)する。
+* 勝点の累積を算出する。
+
+```{r points}
+## 得失点、勝点の累積を算出
+combi_point <- combi_split %>%
+    dplyr::group_by(year, team) %>%
+    dplyr::arrange(year,section,seq) %>%
+    dplyr::mutate(cum_vp = cumsum(victory_point)) %>%
+    dplyr::mutate(cum_score = cumsum(my_score - opponent_score)) %>%
+    dplyr::mutate(for_calc_rank = cum_vp * 1000 + cum_score) %>%
+    dplyr::ungroup(.)
+```	
+
+### 順位を算出する。
+* 節で切りTeamの全ての勝点と得失点でrankingを取る。
+* rank : 節単位のランキング
+* desc_rank : 逆順でのランキング(下位が上位)
+* pre_rank : 前節のランキング
+	
+```{r ranking}
+combi_rank <- combi_point %>%
+    dplyr::group_by(year, section, stage) %>%
+    dplyr::mutate(rank = min_rank(desc(for_calc_rank))) %>%
+    dplyr::mutate(desc_rank = if_else(stage == "Ｊ１", 34 - rank, 42 - rank)) %>%
+    dplyr::ungroup(.) 
+
+combi_pre_rank <- combi_rank %>%
+    dplyr::group_by(year, team) %>%
+    dplyr::mutate(pre_rank = lag(rank)) %>%
+    dplyr::ungroup(.) %>%
+    dplyr::mutate(pre_rank = ifelse(is.na(pre_rank),0, pre_rank)) %>%
+    dplyr::mutate(pre_desc_rank = if_else(stage == "Ｊ１", 34 - pre_rank, 42 - pre_rank))
+
+## pre_rankにNAが含まれている。 
+## 後述する分析結果より、pre_rankがyに対して負の相関あり？と考えて、0を投入する。
+
+combi_pre_rank %>%
+    dplyr::filter(team == "鹿島アントラーズ") %>%
+    dplyr::select(team, cum_vp, cum_score, rank) %>%
+    head(20)
+
+combi_pre_rank %>%
+    dplyr::filter(year == 2013, section == 12, stage == "Ｊ１") %>%
+    dplyr::arrange(desc(for_calc_rank)) %>%
+    dplyr::select(cum_vp, cum_score, for_calc_rank, rank) %>%
+    head(10)
+```
+### ピタゴラス勝率を算出する
+[ピタゴラス勝率](https://ja.wikipedia.org/wiki/%E3%83%94%E3%82%BF%E3%82%B4%E3%83%A9%E3%82%B9%E5%8B%9D%E7%8E%87)
+得点と失点からチームの勝率を予測するセイバーメトリクスの計算式で、今回は勝率を求める問題ではな
+いので、この値をチームが勝っている雰囲気をファンが感じている割合と解釈してみる。
+
+$$
+WIN\% = \frac{(Runs Scored)^2}{(Runs Scored)^2 + (Runs Allowed)^2}
+$$
+
+* Runs Scored : 得点
+* Runs Allowed : 失点
+
+```{r pythagras expectation}
+combi_pre_win_rate <- combi_pre_rank %>%
+    dplyr::group_by(year, team) %>%
+    dplyr::arrange(year,section,seq) %>%
+    dplyr::mutate(cum_runs_scored = cumsum(my_score)) %>%
+    dplyr::mutate(cum_runs_allowed = cumsum(opponent_score)) %>%
+    dplyr::mutate(win_rate = ifelse(((cum_runs_scored)^2 + (cum_runs_allowed)^2) == 0,
+                                    0,
+                                    (cum_runs_scored)^2 / ((cum_runs_scored)^2 + (cum_runs_allowed)^2))) %>%
+    dplyr::mutate(pre_win_rate = lag(win_rate)) %>%
+    dplyr::mutate(pre_win_rate = ifelse(is.na(pre_win_rate), 0, pre_win_rate)) %>%
+    dplyr::ungroup(.)
+```
+
+### home, away単位のレコードを試合単位に戻す
+
+```{r marge home and away}
+## 試合単位にマージ
+home_combi <- combi_pre_win_rate%>%
+    dplyr::filter(type == "home") %>%
+    dplyr::select(c(id, victory_point, cum_vp, cum_score, rank, desc_rank, pre_rank, pre_desc_rank, pre_win_rate))
+
+away_combi <- combi_pre_win_rate%>%
+    dplyr::filter(type == "away") %>%
+    dplyr::select(c(id, victory_point, cum_vp, cum_score, rank, desc_rank, pre_rank, pre_desc_rank, pre_win_rate))
+
+combi_ranking <- combi %>%
+    dplyr::left_join(home_combi, by="id") %>%
+    dplyr::rename(victory_point.home = victory_point,
+                  cum_vp.home = cum_vp,
+                  cum_score.home =cum_score,
+                  rank.home = rank,
+                  desc_rank.home = desc_rank,
+                  pre_rank.home = pre_rank,
+                  pre_desc_rank.home = pre_desc_rank,
+                  pre_win_rate.home = pre_win_rate) %>%
+    dplyr::left_join(away_combi, by="id") %>%
+    dplyr::rename(victory_point.away = victory_point,
+                  cum_vp.away = cum_vp,
+                  cum_score.away =cum_score,
+                  rank.away = rank,
+                  desc_rank.away = desc_rank,
+                  pre_rank.away = pre_rank,
+                  pre_desc_rank.away = pre_desc_rank,
+                  pre_win_rate.away = pre_win_rate)
+```
+## その他の加工
+### テレビ局の数の導出
+局数が増加すると動員数も増加している傾向が見られる。
+```{r tv}
+combi_tv <- combi_ranking %>%
+    dplyr::mutate(media = str_count(tv,"／") + 1)
+```
+
+### 開始時間
+todo 翌日休みフラグ
+もう少し考えが必要
+```{r time}
+combi_time <- combi_tv %>%
+    dplyr::mutate(hour = str_sub(time, 1,2)) %>%
+    dplyr::mutate(week = ifelse(str_detect(gameday,"[土日祝]"), 1, 0))
+```
+
+### 天候
+雨を1,それ以外を0とする。
+
+不快指数の求め方には何通りかあるが、乾球温度（=気温）を$T_d$（°C）、湿度を H（%）とすると、
+$$
+0.81*T_d + 0.01*H*(0.99 * T_d - 14.3) + 46.3
+$$
+
+```{r weather}
+combi_weather <- combi_time %>%
+    dplyr::mutate(rain = as.factor(ifelse(str_detect(weather,"雨"), 1, 0))) %>%
+    dplyr::mutate(humidity = as.numeric(str_replace(humidity, "%", ""))) %>%
+    dplyr::mutate(discomfort_index = 0.81 * temperature + 0.01 * humidity * (0.99 * temperature - 14.3) + 46.3)
+```
+
+### 外れ値の削除
+無観客試合の削除
+```{r y_0}
+combi_y_0 <- combi_weather %>%
+    dplyr::filter(is.na(y) | y != 0)
+```
+
+### 点数の近いチームの変数
+点数の近いチーム(near)はyの説明変数とはならない。
+```{r near}
+combi_near <- combi_y_0 %>%
+    dplyr::mutate(near = log(1/(abs(rank.home - rank.away) + 1)))
+```	
+
+### 節終盤で下位は盛り上るか？
+傾向は見えない。現状、見方が悪いと思う。別の説明変数がよりyと相関する場合は、そちらに引きづられて、この変数の効果を確認できないのでは？
+
+```{r heat}
+combi_heat <- combi_near %>%
+    dplyr::mutate(heat = section/(pre_desc_rank.home + pre_desc_rank.away + 1))
+```
+
+```{r mod}
+combi_mod <- combi_heat
+```
+
+## trainとtestに分割する
+testは全てのレコードを含むので投稿用に試合を絞る。
+
+```{r split}
+train <- combi_mod %>%
+    dplyr::filter(!is.na(y))
+
+sample_submit <- read.csv("../motodata/sample_submit.csv", header=FALSE)
+colnames(sample_submit) <- c("id","pred")
+
+test <- combi_mod %>%
+    dplyr::filter(is.na(y)) %>%
+    dplyr::inner_join(select(sample_submit,-pred), by="id") 
+```   	
+
+## 加工データの出力
+
+```{r write}
+write.table(train, file="../data/transformed_train.csv",
+            quote=FALSE, sep=",", row.names=FALSE, col.names=TRUE)
+
+write.table(test, file="../data/transformed_test.csv",
+            quote=FALSE, sep=",", row.names=FALSE, col.names=TRUE)
+```

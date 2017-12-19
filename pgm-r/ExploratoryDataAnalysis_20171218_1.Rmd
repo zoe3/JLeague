@@ -1,0 +1,192 @@
+---
+title : DS養成講座  Jリーグ観客動員数を予測せよ！
+author : Shinji KAWASOE
+output :
+  html_document:
+    number_sections: true
+    toc: true
+    fig_width: 7
+    fig_height: 4.5
+    theme: readable
+---
+Data : `r Sys.Date()`
+
+# データの中を調べる。
+
+データ探索を「Exploratory Data Analysis」と言うらしい。
+
+# データ加工
+
+```{r library}
+## 使用ライブラリ
+library(tidyverse)
+library(modelr)
+library(knitr)
+```
+
+```{r read.csv}
+## データ読込(結合したデータ)
+train<-read.csv("../data/train_new.csv", #読込ファイル
+                header=TRUE, #読込データのヘッダー有無
+                stringsAsFactors=FALSE #文字列の読込時の型指定(character)
+)
+test<-read.csv("../data/test_new.csv",
+               header=TRUE,
+               stringsAsFactors=FALSE)
+```
+
+# Variable Conversionの詳細確認
+
+目的変数(観客数)を直接予測するではなく、試合の行なわれるスタジアムの収容率を予測して、最後に観客数に戻すことを行なう。
+
+収容率を直接予測するのではなく、その対数オッズにて0~1の値で予測することで、収容率が0~100%の範囲に収まるようにする。
+
+1. 目的変数を収容率に変換。$y_1$:観客動員数、capa:スタジアム収容人数として、
+
+$y_2 = \frac{y_1}{capa}.$
+
+2. 次に、対数オッズに変換する。
+
+$y_3 = log(\frac{y_2}{1-y_2}).$
+
+3. この$y_3$を線形回帰モデルを用いて予測する。このとこ、変数加工(変数作成、線形化など)やデータ
+   加工(欠損、外れ値処理)、変数選択(変数同士の相関確認)などを忘れないように。
+
+4. 予測されて$\hat{y_3}$を収容率に戻します。このとき、対数オッズ変換の逆関数はロジスティク関数となる。
+
+$\hat{y_2} = \frac{1}{1+e^{-\hat{y_3}}}.$
+
+5. 最後に収容率から観客数に変換する。
+
+$\hat{y_1} = capa * \hat{y_2}.$
+
+```{r}
+## 観客数0の場合は除く(異常値なのと、対数オッズが発散するため)
+train <- train %>%
+    dplyr::filter(y != 0)
+
+## 予測するy_3の作成
+train <- train %>%
+    dplyr::mutate(
+               y_2 = y / capa,
+               y_3 = log(y_2 / (1 - y_2)))
+
+## TV放送数の追加
+train$tv_num <- sapply(strsplit(train$tv, "／"), length) - 1
+
+## 収容率の範囲
+summary(train$y /train$capa)
+```
+
+最小値が0%より大きく、最大値が100%未満であることを確認する。
+
+0%の場合、${y_3 = log(0)}となりマイナス無限大に発散する。
+
+100%の場合${\frec{y_2}{1 - y_2}}にて、0で割る(devision by zero)ことになりErrorとなる。
+
+```{r}
+## TV放送数の線形性チェック(観客数)
+train %>%
+    dplyr::group_by(tv_num) %>%
+    dplyr::summarise(y_mean = mean(y)) %>%
+    dplyr::ungroup(.) %>%
+    ggplot(., aes(x = tv_num, y = y_mean)) +
+    geom_line() + ggtitle("TV放送数の線形性チェック(観客数 =y)")
+
+## TV放送数の線形性チェック(収容率 y_3)
+train %>%
+    dplyr::group_by(tv_num) %>%
+    dplyr::summarise(y_3_mean = mean(y_3)) %>%
+    dplyr::ungroup(.) %>%
+    ggplot(., aes(x = tv_num, y = y_3_mean)) +
+    geom_line() + ggtitle("TV放送数の線形性チェック(収容率 =y_3)")
+```
+
+データ加工、線形化
+
+```{r}
+train$tv_num_1 <- ifelse(train$tv_num == 0, -1, train$tv_num)
+train$tv_num_2 <- ifelse(train$tv_num == 0, -2, train$tv_num)
+
+## TV放送数の線形性チェック(観客数)
+train %>%
+    dplyr::group_by(tv_num_1) %>%
+    dplyr::summarise(y_mean = mean(y)) %>%
+    dplyr::ungroup(.) %>%
+    ggplot(., aes(x = tv_num_1, y = y_mean)) +
+    geom_line() + ggtitle("TV放送数の線形性チェック(観客数 =y):加工後")
+
+## TV放送数の線形性チェック(収容率 y_3)
+train %>%
+    dplyr::group_by(tv_num_2) %>%
+    dplyr::summarise(y_3_mean = mean(y_3)) %>%
+    dplyr::ungroup(.) %>%
+    ggplot(., aes(x = tv_num_2, y = y_3_mean)) +
+    geom_line() + ggtitle("TV放送数の線形性チェック(収容率 =y_3):加工後")
+```
+
+# Predictions and Residuals
+
+```{r}
+
+mod1 <- glm(y ~ tv_num_1, data=train, family=gaussian(link="identity"))
+mod2 <- glm(y_3 ~ tv_num_2, data=train, family=gaussian(link="identity"))
+
+## オフセット項の利用。
+## データ解析のための統計モデリング入門
+## 6.6 割算値の統計モデリングはやめよう より
+mod3 <- glm(y ~ tv_num_2, offset = log(capa), data=train, family=gaussian(link="identity"))
+
+train2 <- train %>%
+    modelr::spread_predictions(mod1, mod2, mod3) %>%
+    dplyr::rename(pred_1 = mod1, pred_y_3 = mod2) %>%
+    dplyr::mutate(pred_1 = ifelse(pred_1 > capa, capa, pred_1),
+                  pred_1 = ifelse(pred_1 < 0, 0, pred_1)) %>%
+    dplyr::mutate(resid1 = y - pred_1) %>%
+    dplyr::mutate(pred_2 = capa * (1 / (1 + exp(-pred_y_3)))) %>%
+    dplyr::mutate(resid2 = y - pred_2) %>%
+    dplyr::mutate(resid3 = y - mod3)
+
+ggplot(train2, aes(resid1)) +
+    geom_freqpoly(binwidth = 1000)
+
+ggplot(train2, aes(resid2)) +
+    geom_freqpoly(binwidth = 1000)
+
+ggplot(train2, aes(resid3)) +
+    geom_freqpoly(binwidth = 1000)
+
+ggplot(train2, aes(tv_num_1, resid1)) +
+    geom_ref_line(h = 0) +
+    geom_jitter(aes(colour = stage))
+
+ggplot(train2, aes(tv_num_2, resid2)) +
+    geom_ref_line(h = 0) +
+    geom_jitter(aes(colour = stage))
+
+ggplot(train2, aes(tv_num_2, resid3)) +
+    geom_ref_line(h = 0) +
+    geom_jitter(aes(colour = stage))
+```
+データ解析のための統計モデリング入門(久保) 6.6 割算値の統計モデリングはやめよう  
+より、オフセット項の利用を実施してみたが、予測結果は観客数のそれに近い。
+
+割算よりも対数オッズを利用することで、収容率を0~1に変換していることが効いているのかと推測される。
+
+# Residuals
+
+```{r}
+options(tibble.width = Inf)
+
+train2 <- as.tibble(train2)
+
+train2 %>%
+    arrange(desc(resid2)) %>%
+    select(resid2, y, capa, tv_num_2, home, away, stadium) 
+
+ggplot(train2, aes(capa, resid2)) +
+    geom_ref_line(h = 0) +
+    geom_jitter(aes(colour = stage))
+
+
+```

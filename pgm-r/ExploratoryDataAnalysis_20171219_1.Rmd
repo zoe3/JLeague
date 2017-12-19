@@ -1,0 +1,136 @@
+---
+title : DS養成講座  Jリーグ観客動員数を予測せよ！
+author : Shinji KAWASOE
+output :
+  html_document:
+    number_sections: true
+    toc: true
+    fig_width: 7
+    fig_height: 4.5
+    theme: readable
+---
+Data : `r Sys.Date()`
+
+# データの中を調べる。
+
+データ探索を「Exploratory Data Analysis」と言うらしい。
+
+# データ加工
+
+```{r library}
+## 使用ライブラリ
+library(tidyverse)
+library(modelr)
+library(knitr)
+```
+
+```{r read.csv}
+## データ読込(結合したデータ)
+train<-read.csv("../data/transformed_train.csv", #読込ファイル
+                header=TRUE, #読込データのヘッダー有無
+                stringsAsFactors=FALSE #文字列の読込時の型指定(character)
+)
+```
+
+# 収容率を対数オッズとして予測する
+
+1. 目的変数を収容率に変換。$y_1$:観客動員数、capa:スタジアム収容人数として、
+
+$y_2 = \frac{y_1}{capa}.$
+
+2. 次に、対数オッズに変換する。
+
+$y_3 = log(\frac{y_2}{1-y_2}).$
+
+3. この$y_3$を線形回帰モデルを用いて予測する。このとこ、変数加工(変数作成、線形化など)やデータ
+   加工(欠損、外れ値処理)、変数選択(変数同士の相関確認)などを忘れないように。
+
+4. 予測されて$\hat{y_3}$を収容率に戻します。このとき、対数オッズ変換の逆関数はロジスティク関数となる。
+
+$\hat{y_2} = \frac{1}{1+e^{-\hat{y_3}}}.$
+
+5. 最後に収容率から観客数に変換する。
+
+$\hat{y_1} = capa * \hat{y_2}.$
+
+```{r Accommodation rate}
+## 予測するy_3の作成
+train <- train %>%
+    dplyr::mutate(y_2 = y / capa,
+                  y_3 = log(y_2 / (1 - y_2)))
+## 収容率の範囲(0%より大きく、100%未満)
+summary(train$y /train$capa)
+```
+
+# 外観
+```{r}
+ggplot(train, aes(section, y, colour = home)) +
+    geom_line() +
+    geom_point() +
+    facet_grid(year ~ stage)
+
+train %>%
+    dplyr::filter(stage == "Ｊ１") %>%
+    ggplot(aes(section, y, colour = home)) +
+    geom_line() +
+    geom_point() +
+    facet_grid(year ~ .)
+
+train %>%
+    dplyr::filter(stage == "Ｊ１") %>%
+    ggplot(aes(x = reorder(home, y, FUN = median), y = y)) +
+    geom_boxplot() +
+    coord_flip() +
+    ggtitle("J1のhomeチーム毎の観客動員数") +
+    facet_grid(. ~ year)
+
+train %>%
+    dplyr::filter(stage != "Ｊ１") %>%
+    ggplot(aes(x = reorder(home, y, FUN = median), y = y)) +
+    geom_boxplot() +
+    coord_flip() +
+    ggtitle("J2のhomeチーム毎の観客動員数") +
+    facet_grid(. ~ year)
+```
+
+# Predictions and Residuals
+
+stage, homeごとにモデルを作成する。
+
+```{r moding}
+## 予測に使う項目を選択
+param = c("capa", "tv")
+
+lm_train<-dplyr::select(train, id, y, stage, home, param)
+
+## stage毎にモデル作成
+by_stage_train <- lm_train %>%
+    group_by(stage, home) %>%
+    nest()
+
+####重回帰分析
+### モデル構築
+## family:目的変数の確率分布とリンク関数の設定(今回は正規分布と恒等写像)
+stage_model <- function(df){
+    glm(y ~ ., data=df, family=gaussian(link="identity"))
+}
+
+by_stage_train <- by_stage_train %>%
+    mutate(model = map(data, stage_model))
+
+by_stage_train <- by_stage_train %>%
+    mutate(
+        pred = map2(data, model, add_predictions),
+        resids = map2(data, model, add_residuals)
+    )
+
+by_stage_train
+
+glance <- by_stage_train %>%
+    mutate(glance = map(model, broom::glance)) %>%
+    unnest(glance, .drop=TRUE)
+    
+glance %>%
+    ggplot(aes(home, df.residual)) +
+    geom_point()
+```
