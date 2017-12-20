@@ -493,12 +493,12 @@ glance
 
 ```{r submit}    
 ## testデータにAddしたレコードを除去する。
-sample <- read_csv("../motodata/sample_submit.csv", col_names=c("id","pred"))
-nrow(sample)
+sample_submit <- read_csv("../motodata/sample_submit.csv", col_names=c("id","pred"))
+nrow(sample_submit)
 
 nrow(test)
 test <- test %>%
-    dplyr::inner_join(sample %>% select(id), by="id")
+    dplyr::inner_join(sample_submit%>% select(id), by="id")
 nrow(test)
 
 ###使用変数の作成

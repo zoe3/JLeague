@@ -65,9 +65,10 @@ summary(train$y /train$capa)
 # 外観
 ```{r views}
 ggplot(train, aes(section, y, colour = home)) +
-    geom_line() +
-    geom_point() +
-    facet_grid(year ~ stage)
+    geom_line(show.legend = FALSE) +
+    geom_point(show.legend = FALSE) +
+    facet_grid(year ~ stage) +
+    ggtitle("homeチーム毎の節に対する観客数推移")
 
 train %>%
     dplyr::filter(stage == "Ｊ１") %>%
@@ -165,17 +166,30 @@ resids %>%
 ```
 
 # 個別詳細
-
+FC東京をターゲットに調査する。
 ```{r}
-train %>%
+fc_tokyo <- train %>%
     dplyr::filter(home=="ＦＣ東京") %>%
-    dplyr::left_join(resids %>% select(id, resid), by = "id") %>%
+    dplyr::left_join(resids %>% select(id, resid), by = "id")
+
+fc_tokyo %>%
+    ggplot(aes(section, resid)) +
+    geom_line(aplha = 1/3)
+
+fc_tokyo %>%
     dplyr::arrange(desc(resid)) %>%
-    head(3)
+    head(5)
+
+fc_tokyo %>%
+    dplyr::arrange(resid) %>%
+    head(2)
+
 ```
-
-
-
+awayのチームにより傾向があるのか？
+```{r}
+ggplot(fc_tokyo, aes(section, resid, group = away)) +
+    geom_point(aes(colour = away), size = 4)
+```
 
 # broomを使う
 

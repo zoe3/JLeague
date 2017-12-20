@@ -168,6 +168,7 @@ ggplot(train2, aes(tv_num_2, resid3)) +
     geom_ref_line(h = 0) +
     geom_jitter(aes(colour = stage))
 ```
+
 データ解析のための統計モデリング入門(久保) 6.6 割算値の統計モデリングはやめよう  
 より、オフセット項の利用を実施してみたが、予測結果は観客数のそれに近い。
 

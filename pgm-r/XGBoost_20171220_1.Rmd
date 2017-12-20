@@ -1,0 +1,163 @@
+---
+title : DS養成講座  Jリーグ観客動員数を予測せよ！
+author : Shinji KAWASOE
+output :
+  html_document:
+    number_sections: true
+    toc: true
+    fig_width: 7
+    fig_height: 4.5
+    theme: readable
+---
+Data : `r Sys.Date()`
+
+# boosting
+
+複数のモデルを順番に学習していく。このとき、正答率に関連して、予測対象ごとに重みづけを行い、モ
+デルを学習するごとに重みを更新していく手法である。
+
+xgboostは勾配ブースティングを用いた手法
+
+# 履歴
+
+2017.12.19 r2
+
+結果 9,640.14585
+
+* 評価指標がaucになっていた。rmseに変更。
+* nround=which.maxになっていた。minに変更。
+
+2017.12.19 r1
+
+結果 13,363.79954
+
+* xgboostで実装
+
+
+# データ加工
+
+```{r library}
+## 使用ライブラリ
+library(tidyverse)
+library(xgboost)
+library(caret)
+```
+
+## 読み込み
+
+```{r read.csv}
+## データ読込(結合したデータ)
+train<-read.csv("../data/transformed_train.csv", #読込ファイル
+                header=TRUE, #読込データのヘッダー有無
+                stringsAsFactors=FALSE #文字列の読込時の型指定(character)
+                )
+test<-read.csv("../data/transformed_test.csv",
+               header=TRUE,
+               stringsAsFactors=FALSE)
+```
+
+## 加工
+
+```{r}
+## カテゴリー変数を数値変数に変換
+train_v <- as.data.frame(predict(dummyVars(~.,data=train), train))
+test_v <- as.data.frame(predict(dummyVars(~.,data=test), test))
+
+## 目的変数作成
+y_train <- train$y
+
+## モデル作成の項目
+names(dplyr::select(train, -id, -y))
+
+## 行列に変換
+x_train <- as.matrix(dplyr::select(train_v, -id, -y))
+x_test <- as.matrix(dplyr::select(test_v, -id))
+```
+
+## テスト
+
+```{r hold out}
+## 構築データの割合
+rate <- 0.7
+
+## 構築データ数(小数の切捨て)
+num <- as.integer(nrow(x_train)*rate)
+
+## 再現性のため乱数シードを固定
+set.seed(17)
+
+## sapmple(ベクトル, ランダムに取得する個数, 復元抽出の有無)
+row <- sample(1:nrow(x_train), num, replace = FALSE)
+           
+## 構築データ
+x_train_train <- x_train[row,]
+
+## 検証データ
+x_train_test <- x_train[-row,]
+
+## 目的変数作成
+y_train_train <- y_train[row]
+y_train_test <- y_train[-row]
+
+## パラメータの設定
+param <- list(objective = "reg:linear", #線形回帰
+              eval_matric = "rmse", #評価指標
+              eta=0.07, #学習率
+              max_depth=3, #決定木の階層
+              min_child_weight=10, #最小ノード数
+              colsample_bytree=0.4, #使用する変数割合
+              gamma=0.9, #損失還元最小値
+              subsample=1 #使用する学習データ割合
+              )
+
+##CVによる学習数探索
+xgbcv <- xgb.cv(param=param, data=x_train_train, label=y_train_train,
+                nrounds=200, #学習回数
+                nfold=5, #CV数
+                nthread=1 #使用するCPU数
+                )
+
+##モデル構築
+model_xgb <- xgboost(param=param, data=x_train_train, label=y_train_train,
+                     nrounds=which.min(xgbcv$evaluation_log$test_rmse_mean),
+                     nthread=1, imprtance=TRUE)
+
+## train_testのrmse
+pred <- predict(model_xgb, x_train_test)
+
+## RMSEの計算
+sqrt(mean((y_train_test - pred)^2))
+
+
+## 変数重要度
+imp <- xgb.importance(names(dplyr::select(train_v, -id, -y)), model=model_xgb)
+print(imp)
+```
+
+# 投稿
+
+```{r OPT}
+##CVによる学習数探索
+xgbcv <- xgb.cv(param=param, data=x_train, label=y_train,
+                nrounds=200, #学習回数
+                nfold=5, #CV数
+                nthread=1 #使用するCPU数
+                )
+
+##モデル構築
+model_xgb <- xgboost(param=param, data=x_train, label=y_train,
+                     nrounds=which.min(xgbcv$evaluation_log$test_rmse_mean),
+                     nthread=1, imprtance=TRUE)
+
+## train_testのrmse
+pred <- predict(model_xgb, x_test)
+
+nrow(x_test)
+
+submit <- cbind(id = test$id, pred)
+head(submit)
+
+###CSV出力(ヘッダーなし)
+write.table(submit, file=paste("../submit/", "submit_xgboost_20171219_2.csv", sep=""),
+            quote=FALSE, sep=",", row.names=FALSE, col.names=FALSE)
+```

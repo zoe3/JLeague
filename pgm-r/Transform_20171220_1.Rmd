@@ -198,8 +198,7 @@ combi_tv <- combi_leakage %>%
 ```
 
 ### 開始時間
-todo 翌日休みフラグ
-もう少し考えが必要
+試合開始時間と翌日休みフラグを追加する。
 ```{r time}
 holiday <- read.csv("../motodata/holiday.csv", header=TRUE)
 
